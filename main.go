@@ -1,23 +1,30 @@
 //Author: Design-BAB
 //Date: 12/24/2025
 //Description: Time for dungeon crawling! The goal is to reach 268 lines of code
+//Notes: Continue onward from suggestions on pg191
 
 package main
 
 import (
+	"math"
+	"strconv"
+	"time"
+
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
 const (
-	Width            = 800
-	Height           = 600
-	CenterX          = Width / 2
-	CenterY          = Height / 2
-	EggTarget        = 20
-	AttackDistance   = 200
-	DragonAndEggTime = 2
-	MoveDistance     = 5
-	MaxFrames        = 432000
+	Width                 = 800
+	Height                = 600
+	CenterX               = Width / 2
+	CenterY               = Height / 2
+	EggTarget             = 20
+	AttackDistance        = 125
+	DragonAwakeAndEggTime = 2
+	MoveDistance          = 5
+	MaxFrames             = 432000
+	HeroOriginalX         = 200
+	HeroOriginalY         = 300
 )
 
 type GameState struct {
@@ -25,11 +32,12 @@ type GameState struct {
 	EggsCollected int
 	IsOver        bool
 	IsComplete    bool
-	ResetRequired bool
+	ScheduleLair  time.Time
 }
 
 func newGame() *GameState {
-	return &GameState{Lives: 3}
+	now := time.Now()
+	return &GameState{Lives: 3, ScheduleLair: now}
 }
 
 type Actor struct {
@@ -48,6 +56,7 @@ type Enemy struct {
 	Texture rl.Texture2D
 	//this is the collision box``
 	rl.Rectangle // This gives Actor all the fields of rl.Rectangle (X, Y, Width, Height)
+	IsAwake      bool
 }
 
 func newEnemy(texture rl.Texture2D, x, y float32) *Enemy {
@@ -80,21 +89,115 @@ func newLair(dragon *Enemy, egg *Object, eggCount, sleepLength, difficulty int) 
 	return &Lair{Dragon: dragon, Egg: egg, EggCount: eggCount, SleepLength: sleepLength, Difficulty: difficulty}
 }
 
-// fromPg186
-func drawLair(lairs [3]*Lair) {
+func update(hero *Actor, lairs [3]*Lair, DragonTexture map[string]rl.Texture2D, yourGame *GameState) {
+	if rl.IsKeyDown(rl.KeyRight) {
+		hero.X = hero.X + hero.Speed
+	}
+	if rl.IsKeyDown(rl.KeyLeft) {
+		hero.X = hero.X - hero.Speed
+	}
+	if rl.IsKeyDown(rl.KeyUp) {
+		hero.Y = hero.Y - hero.Speed
+	}
+	if rl.IsKeyDown(rl.KeyDown) {
+		hero.Y = hero.Y + hero.Speed
+	}
+	//collision with the window
+	hero.X = rl.Clamp(hero.X, 0.0, Width-hero.Width)
+	hero.Y = rl.Clamp(hero.Y, 0.0, Height-hero.Height)
+	checkForCollisions(lairs, hero, yourGame)
+	//the scheduler
+	if time.Since(yourGame.ScheduleLair) >= 1*time.Second {
+		updateLairs(lairs, DragonTexture, yourGame)
+		now := time.Now()
+		yourGame.ScheduleLair = now
+	}
+	if yourGame.Lives <= 0 {
+		yourGame.IsOver = true
+	}
+}
+
+func updateLairs(lairs [3]*Lair, DragonTexture map[string]rl.Texture2D, yourGame *GameState) {
 	for _, lair := range lairs {
-		rl.DrawTexture(lair.Dragon.Texture, int32(lair.Dragon.X), int32(lair.Dragon.Y), rl.White)
-		if lair.HideEgg == false {
-			rl.DrawTexture(lair.Egg.Texture, int32(lair.Egg.X), int32(lair.Egg.Y), rl.White)
+		if lair.Dragon.IsAwake == false {
+			updateSleepingDragon(lair, DragonTexture)
+		} else if lair.Dragon.IsAwake == true {
+			updateWakingDragon(lair, DragonTexture)
+		}
+		updateEgg(lair)
+	}
+}
+
+func updateSleepingDragon(lair *Lair, DragonTexture map[string]rl.Texture2D) {
+	if lair.SleepCount >= lair.SleepLength {
+		lair.Dragon.Texture = DragonTexture["awake"]
+		lair.Dragon.IsAwake = true
+		lair.SleepCount = 0
+	} else {
+		lair.SleepCount++
+	}
+}
+
+func updateWakingDragon(lair *Lair, DragonTexture map[string]rl.Texture2D) {
+	if lair.WakeCount >= DragonAwakeAndEggTime {
+		lair.Dragon.Texture = DragonTexture["sleeping"]
+		lair.Dragon.IsAwake = false
+		lair.WakeCount = 0
+	} else {
+		lair.WakeCount++
+	}
+}
+
+func updateEgg(lair *Lair) {
+	if lair.HideEgg == true {
+		if lair.HideEggCount >= DragonAwakeAndEggTime {
+			lair.HideEgg = false
+			lair.HideEggCount = 0
+		} else {
+			lair.HideEggCount++
 		}
 	}
 }
 
-func drawCounter() {
-
+func checkForCollisions(lairs [3]*Lair, hero *Actor, yourGame *GameState) {
+	for _, lair := range lairs {
+		if lair.HideEgg == false {
+			checkForEggCollision(lair, hero, yourGame)
+		}
+		if lair.Dragon.IsAwake {
+			checkForDragonCollision(lair, hero, yourGame)
+		}
+	}
 }
 
-func draw(lairs [3]*Lair, background rl.Texture2D, hero *Actor, dragon *Enemy, yourGame *GameState) {
+func checkForEggCollision(lair *Lair, hero *Actor, yourGame *GameState) {
+	//collision between egg and hero
+	if rl.CheckCollisionRecs(hero.Rectangle, lair.Egg.Rectangle) {
+		lair.HideEgg = true
+		yourGame.EggsCollected += lair.EggCount
+		if yourGame.EggsCollected >= EggTarget {
+			yourGame.IsComplete = true
+		}
+	}
+}
+
+func checkForDragonCollision(lair *Lair, hero *Actor, yourGame *GameState) {
+	xDistance := hero.X - lair.Dragon.X
+	yDistance := hero.Y - lair.Dragon.Y
+	distance := math.Hypot(float64(xDistance), float64(yDistance))
+	if distance < AttackDistance {
+		handleDragonCollision(hero, yourGame)
+	}
+}
+
+func handleDragonCollision(hero *Actor, yourGame *GameState) {
+	// the original code uses animate(hero, pos_HERO_START, on_finished=subtract_life)... I deal with that later
+	hero.X = HeroOriginalX
+	hero.Y = HeroOriginalY
+	yourGame.Lives--
+}
+
+func draw(lairs [3]*Lair, background, heart, egg rl.Texture2D, hero *Actor, yourGame *GameState) {
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.RayWhite)
 	rl.DrawTexture(background, 0, 0, rl.White)
@@ -117,8 +220,27 @@ func draw(lairs [3]*Lair, background rl.Texture2D, hero *Actor, dragon *Enemy, y
 		//this is what is drawn during gameplay
 		rl.DrawTexture(hero.Texture, int32(hero.X), int32(hero.Y), rl.White)
 		drawLair(lairs)
+		drawGUI(heart, egg, yourGame)
 	}
 	rl.EndDrawing()
+}
+
+// fromPg186
+func drawLair(lairs [3]*Lair) {
+	for _, lair := range lairs {
+		rl.DrawTexture(lair.Dragon.Texture, int32(lair.Dragon.X), int32(lair.Dragon.Y), rl.White)
+		if lair.HideEgg == false {
+			rl.DrawTexture(lair.Egg.Texture, int32(lair.Egg.X), int32(lair.Egg.Y), rl.White)
+		}
+	}
+}
+
+// In the book, it calls it draw_counters(eggs_collected, live/s)
+func drawGUI(heart, egg rl.Texture2D, yourGame *GameState) {
+	rl.DrawTexture(egg, 0, Height-30, rl.White)
+	rl.DrawText(strconv.Itoa(yourGame.EggsCollected), 30, Height-30, 40, rl.RayWhite)
+	rl.DrawTexture(heart, 60, Height-30, rl.White)
+	rl.DrawText(strconv.Itoa(yourGame.Lives), 90, Height-30, 40, rl.RayWhite)
 }
 
 func main() {
@@ -129,6 +251,8 @@ func main() {
 	//import Textures
 	background := rl.LoadTexture("images/dungeon.png")
 	defer rl.UnloadTexture(background)
+	heart := rl.LoadTexture("images/life-count.png")
+	defer rl.UnloadTexture(heart)
 	heroTexture := rl.LoadTexture("images/hero.png")
 	defer rl.UnloadTexture(heroTexture)
 	DragonTexture := map[string]rl.Texture2D{
@@ -138,24 +262,26 @@ func main() {
 	for _, texture := range DragonTexture {
 		defer rl.UnloadTexture(texture)
 	}
-	//Why the long name? To remind myself that 0 is 1 egg
-	var eggPlusOneTexture [3]rl.Texture2D
-	eggPlusOneTexture[0] = rl.LoadTexture("images/one-egg.png")
-	eggPlusOneTexture[1] = rl.LoadTexture("images/two-eggs.png")
-	eggPlusOneTexture[2] = rl.LoadTexture("images/three-eggs.png")
-	for _, texture := range eggPlusOneTexture {
+	//Remember, 0 is reserved for the GUI, and the rest of the numbers represent the number of eggs
+	var eggTexture [4]rl.Texture2D
+	eggTexture[0] = rl.LoadTexture("images/egg-count.png")
+	eggTexture[1] = rl.LoadTexture("images/one-egg.png")
+	eggTexture[2] = rl.LoadTexture("images/two-eggs.png")
+	eggTexture[3] = rl.LoadTexture("images/three-eggs.png")
+	for _, texture := range eggTexture {
 		defer rl.UnloadTexture(texture)
 	}
 	//Our pieces in the game!
 	hero := newActor(heroTexture, 200, 300)
-	dragon := newEnemy(DragonTexture["sleeping"], 600, 100)
 	//from pg184- making lairs. I had to put it down here because I can't make lairs without importing textures first
 	var lairs [3]*Lair
-	lairs[0] = newLair(newEnemy(DragonTexture["sleeping"], 600, 100), newObject(eggPlusOneTexture[0], 400, 100), 1, 10, 0)
-	lairs[1] = newLair(newEnemy(DragonTexture["sleeping"], 600, 300), newObject(eggPlusOneTexture[1], 400, 300), 2, 7, 1)
-	lairs[2] = newLair(newEnemy(DragonTexture["sleeping"], 600, 500), newObject(eggPlusOneTexture[2], 400, 500), 3, 4, 2)
+	lairs[0] = newLair(newEnemy(DragonTexture["sleeping"], 500, 70), newObject(eggTexture[1], 420, 140), 1, 10, 0)
+	lairs[1] = newLair(newEnemy(DragonTexture["sleeping"], 500, 230), newObject(eggTexture[2], 420, 290), 2, 7, 1)
+	lairs[2] = newLair(newEnemy(DragonTexture["sleeping"], 500, 400), newObject(eggTexture[3], 420, 470), 3, 4, 2)
 	frames := 0
 	for !rl.WindowShouldClose() && frames < MaxFrames {
-		draw(lairs, background, hero, dragon, yourGame)
+		update(hero, lairs, DragonTexture, yourGame)
+		draw(lairs, background, heart, eggTexture[0], hero, yourGame)
+		frames++
 	}
 }
