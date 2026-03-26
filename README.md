@@ -97,6 +97,3 @@ The game follows a clean entity-component architecture:
 - **Enemy**: Dragon entities with awake/asleep states
 - **Object**: Collectible eggs with collision detection
 - **Lair**: Container for dragon, eggs, and timing logic
-## License
-
-[Add your license here]
